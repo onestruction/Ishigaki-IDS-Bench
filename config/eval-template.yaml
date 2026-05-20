@@ -1,0 +1,38 @@
+run:
+  output_dir: results
+  api_workers: 1
+  limit: null
+
+dataset:
+  name: ONESTRUCTION/Ishigaki-IDS-Bench
+  split: test
+  path: null
+
+model:
+  name: qwen/qwen3-8b-04-28
+  base_url: null
+
+  temperature: 0.6
+  top_p: 0.95
+  top_k: 20
+  min_p: 0.0
+  max_tokens: 8192
+  enable_thinking: true
+  reasoning_effort: null
+  reasoning_exclude: null
+
+  request_timeout_sec: 600
+  retries: 0
+
+  provider:
+    order: []
+    allow_fallbacks: false
+
+prompt:
+  path: prompts/ishigaki-ids-bench_0shot.txt
+
+evaluation:
+  run_ids_audit: true
+  ids_audit_command: ids-tool
+  ids_audit_args: ["audit"]
+  ids_audit_timeout_sec: 60

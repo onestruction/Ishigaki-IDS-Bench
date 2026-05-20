@@ -1,0 +1,15 @@
+.DS_Store
+__MACOSX/
+._*
+
+.env
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+
+results/*
+!results/README.md
+*.log
+*.tmp
