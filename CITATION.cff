@@ -1,6 +1,6 @@
 cff-version: 1.2.0
 message: "If you use Ishigaki-IDS-Bench, please cite the associated paper."
-title: "Ishigaki-IDS-Bench: A Benchmark for Generating Information Delivery Specifications from BIM Information Requirements"
+title: "Ishigaki-IDS-Bench: A Benchmark for Generating Information Delivery Specification from BIM Information Requirements"
 authors:
   - family-names: Kanazawa
     given-names: Ryo
@@ -29,10 +29,10 @@ authors:
 year: 2026
 license: CC-BY-4.0
 repository-code: "https://github.com/onestruction/Ishigaki-IDS-Bench"
-url: "https://huggingface.co/datasets/ONESTRUCTION/Ishigaki-IDS-Bench"
+url: "https://arxiv.org/abs/2605.22079"
 preferred-citation:
-  type: article
-  title: "Ishigaki-IDS-Bench: A Benchmark for Generating Information Delivery Specifications from BIM Information Requirements"
+  type: generic
+  title: "Ishigaki-IDS-Bench: A Benchmark for Generating Information Delivery Specification from BIM Information Requirements"
   authors:
     - family-names: Kanazawa
       given-names: Ryo
@@ -59,4 +59,6 @@ preferred-citation:
     - family-names: Nishioka
       given-names: Daiho
   year: 2026
-  notes: "arXiv preprint, forthcoming"
+  doi: "10.48550/arXiv.2605.22079"
+  url: "https://arxiv.org/abs/2605.22079"
+  notes: "arXiv:2605.22079 [cs.CL]"

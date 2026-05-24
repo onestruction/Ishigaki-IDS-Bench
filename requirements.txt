@@ -1,6 +1,6 @@
-datasets
-openai
-python-dotenv
-PyYAML
-requests
-tqdm
+datasets==4.8.5
+openai==2.38.0
+python-dotenv==1.2.2
+PyYAML==6.0.3
+requests==2.34.2
+tqdm==4.67.3

@@ -269,6 +269,9 @@ def write_openrouter_metadata(config_path: Path, cfg: dict[str, Any], model_name
         "request_timeout_sec",
         "retries",
         "transforms",
+        "seed",
+        "max_completion_tokens",
+        "stop",
     ]
     generation_parameters = {key: model_cfg.get(key) for key in generation_keys if key in model_cfg}
 
@@ -279,6 +282,7 @@ def write_openrouter_metadata(config_path: Path, cfg: dict[str, Any], model_name
             "engine": f"openrouter:{model_name}",
             "model": model_name,
             "config_path": str(config_path),
+            "run_config": dict(cfg.get("run") or {}),
             "generation_parameters": generation_parameters,
             "provider_config": provider_config,
             "endpoint_snapshot": endpoint_snapshot,
@@ -288,7 +292,19 @@ def write_openrouter_metadata(config_path: Path, cfg: dict[str, Any], model_name
 
 def build_request_kwargs(model_cfg: dict[str, Any], model_name: str, messages: list[dict[str, str]]) -> dict[str, Any]:
     kwargs: dict[str, Any] = {"model": model_name, "messages": messages}
-    for key in ("temperature", "top_p", "presence_penalty", "frequency_penalty", "max_tokens"):
+    if model_cfg.get("max_tokens") is not None and model_cfg.get("max_completion_tokens") is not None:
+        raise ValueError("Set only one of model.max_tokens or model.max_completion_tokens.")
+
+    for key in (
+        "temperature",
+        "top_p",
+        "presence_penalty",
+        "frequency_penalty",
+        "max_tokens",
+        "max_completion_tokens",
+        "seed",
+        "stop",
+    ):
         if model_cfg.get(key) is not None:
             kwargs[key] = model_cfg[key]
 
@@ -319,30 +335,85 @@ def build_request_kwargs(model_cfg: dict[str, Any], model_name: str, messages: l
     return kwargs
 
 
+def request_metadata(kwargs: dict[str, Any]) -> dict[str, Any]:
+    metadata = {key: value for key, value in kwargs.items() if key != "messages"}
+    metadata["message_count"] = len(kwargs.get("messages") or [])
+    return metadata
+
+
+def dump_model_obj(obj: Any) -> Any:
+    if obj is None:
+        return None
+    if hasattr(obj, "model_dump"):
+        return obj.model_dump()
+    if isinstance(obj, (dict, list, str, int, float, bool)):
+        return obj
+    return str(obj)
+
+
+class GenerationError(RuntimeError):
+    def __init__(
+        self,
+        message: str,
+        *,
+        raw: str = "",
+        cleaned: str = "",
+        generation: dict[str, Any] | None = None,
+        attempts: list[dict[str, Any]] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.raw = raw
+        self.cleaned = cleaned
+        self.generation = generation or {}
+        self.attempts = attempts or []
+
+
 def generate_one(
     client: OpenAI,
     model_name: str,
     model_cfg: dict[str, Any],
     prompt: str,
     messages: list[dict[str, str]],
-) -> tuple[str, str]:
+) -> tuple[str, str, dict[str, Any]]:
     request_messages = [{"role": "system", "content": prompt}] + messages
     kwargs = build_request_kwargs(model_cfg, model_name, request_messages)
     last_error: Exception | None = None
-    max_retries = int(model_cfg.get("retries", 2))
+    max_retries = int(model_cfg.get("retries", 0) or 0)
+    raw = ""
+    cleaned = ""
+    generation: dict[str, Any] = {"request": request_metadata(kwargs)}
+    attempts: list[dict[str, Any]] = []
     for attempt in range(max_retries + 1):
         try:
             resp = client.chat.completions.create(**kwargs)
-            raw = resp.choices[0].message.content or ""
+            choice = resp.choices[0]
+            message = choice.message
+            raw = message.content or ""
             cleaned = strip_model_output(raw)
+            generation = {
+                "request": request_metadata(kwargs),
+                "response_id": getattr(resp, "id", None),
+                "response_model": getattr(resp, "model", None),
+                "finish_reason": getattr(choice, "finish_reason", None),
+                "usage": dump_model_obj(getattr(resp, "usage", None)),
+                "reasoning_content": getattr(message, "reasoning_content", None),
+            }
             if cleaned:
-                return raw, cleaned
+                return raw, cleaned, generation
             last_error = RuntimeError("empty model output")
+            attempts.append({"attempt": attempt + 1, "error": "empty model output", "generation": generation})
         except Exception as e:
             last_error = e
+            attempts.append({"attempt": attempt + 1, "error": f"{type(e).__name__}: {e}", "request": generation["request"]})
         if attempt < max_retries:
             time.sleep(2**attempt)
-    raise RuntimeError(f"generation failed: {last_error}") from last_error
+    raise GenerationError(
+        f"generation failed: {last_error}",
+        raw=raw,
+        cleaned=cleaned,
+        generation=generation,
+        attempts=attempts,
+    ) from last_error
 
 
 def strip_ns(tag: str) -> str:
@@ -654,22 +725,28 @@ def run_ids_audit(ids_path: Path, eval_cfg: dict[str, Any]) -> dict[str, Any] | 
         }
 
 
+def audit_statuses(audit: dict[str, Any] | None) -> list[str]:
+    if audit is None:
+        return []
+    stdout = audit.get("stdout") or ""
+    for line in stdout.splitlines():
+        if "Completed with status:" in line:
+            status = line.split("Completed with status:", 1)[1].strip().strip(".")
+            return [item.strip() for item in status.split(",") if item.strip()]
+    return []
+
+
 def classify_audit(audit: dict[str, Any] | None) -> dict[str, Any]:
     if audit is None:
         return {"ids_ok": None, "structure_ok": None, "content_ok": None, "implementation_ok": None}
     if audit.get("skipped"):
         return {"ids_ok": None, "structure_ok": None, "content_ok": None, "implementation_ok": None}
-    stdout = audit.get("stdout") or ""
-    status = ""
-    for line in stdout.splitlines():
-        if "Completed with status:" in line:
-            status = line.split("Completed with status:", 1)[1].strip().strip(".")
-            break
-    lowered = status.lower()
-    if audit.get("success") or lowered == "ok" or lowered.endswith(" ok"):
+
+    lowered = {status.lower() for status in audit_statuses(audit)}
+    if audit.get("success") or "ok" in lowered:
         return {"ids_ok": 1, "structure_ok": 1, "content_ok": 1, "implementation_ok": 1}
     if "idsstructureerror" in lowered:
-        return {"ids_ok": 0, "structure_ok": 0, "content_ok": None, "implementation_ok": 1}
+        return {"ids_ok": 0, "structure_ok": 0, "content_ok": 0, "implementation_ok": 1}
     if "idscontenterror" in lowered:
         return {"ids_ok": 0, "structure_ok": 1, "content_ok": 0, "implementation_ok": 1}
     return {"ids_ok": 0, "structure_ok": None, "content_ok": None, "implementation_ok": 0}
@@ -680,16 +757,55 @@ def mean(values: list[float]) -> float | None:
 
 
 def summarize_group(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    audit_rows = [r for r in rows if r.get("audit_metrics", {}).get("ids_ok") is not None]
+    audit_rows = [r for r in rows if (r.get("audit_metrics") or {}).get("ids_ok") is not None]
     ids_ok = sum(int(r["audit_metrics"]["ids_ok"] == 1) for r in audit_rows) if audit_rows else None
+    processability = sum(int(r["audit_metrics"]["implementation_ok"] == 1) for r in audit_rows) if audit_rows else None
+    structure = sum(int(r["audit_metrics"]["structure_ok"] == 1) for r in audit_rows) if audit_rows else None
+    content = sum(int(r["audit_metrics"]["content_ok"] == 1) for r in audit_rows) if audit_rows else None
+    facet_f1_values = [float(r.get("facet", {}).get("f1", 0.0) or 0.0) for r in rows]
+    facet_precision_values = [float(r.get("facet", {}).get("precision", 0.0) or 0.0) for r in rows]
+    facet_recall_values = [float(r.get("facet", {}).get("recall", 0.0) or 0.0) for r in rows]
+    ag_facet_values = [
+        float(r.get("facet", {}).get("f1", 0.0) or 0.0)
+        * int((r.get("audit_metrics") or {}).get("content_ok") == 1)
+        for r in rows
+    ]
     return {
         "count": len(rows),
         "generated": sum(1 for r in rows if r.get("generated")),
         "errors": sum(1 for r in rows if r.get("error")),
+        "truncated": sum(1 for r in rows if r.get("truncated")),
         "ids_ok": ids_ok,
+        "ids_ok_mean": None if ids_ok is None or not rows else ids_ok / len(rows),
+        "implementation_ok": processability,
+        "implementation_ok_mean": None if processability is None or not rows else processability / len(rows),
+        "processability": processability,
+        "processability_mean": None if processability is None or not rows else processability / len(rows),
+        "structure_ok": structure,
+        "structure_ok_mean": None if structure is None or not rows else structure / len(rows),
+        "structure": structure,
+        "structure_mean": None if structure is None or not rows else structure / len(rows),
+        "content_ok": content,
+        "content_ok_mean": None if content is None or not rows else content / len(rows),
+        "content": content,
+        "content_mean": None if content is None or not rows else content / len(rows),
         "audit_count": len(audit_rows),
-        "facet_f1_mean": mean([float(r.get("facet", {}).get("f1", 0.0) or 0.0) for r in rows]),
+        "facet_f1_mean": mean(facet_f1_values),
+        "facet_precision_mean": mean(facet_precision_values),
+        "facet_recall_mean": mean(facet_recall_values),
         "facet_score_mean": mean([float(r.get("facet", {}).get("score", 0.0) or 0.0) for r in rows]),
+        "ag_facet_f1_mean": mean(ag_facet_values),
+        "paper_metrics": {
+            "N": len(rows),
+            "Processability": None if processability is None or not rows else processability / len(rows),
+            "Structure": None if structure is None or not rows else structure / len(rows),
+            "Content": None if content is None or not rows else content / len(rows),
+            "IDSAuditPass": None if content is None or not rows else content / len(rows),
+            "FacetF1": mean(facet_f1_values),
+            "AG-FacetF1": mean(ag_facet_values),
+            "Precision": mean(facet_precision_values),
+            "Recall": mean(facet_recall_values),
+        },
     }
 
 
@@ -706,6 +822,16 @@ def build_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
             for item in values:
                 groups[str(item)].append(row)
         summary["by"][key] = {name: summarize_group(group) for name, group in sorted(groups.items())}
+    summary["paper_metrics"] = {
+        "overall": summary["overall"]["paper_metrics"],
+        "by": {
+            key: {
+                name: group["paper_metrics"]
+                for name, group in groups.items()
+            }
+            for key, groups in summary["by"].items()
+        },
+    }
     return summary
 
 
@@ -727,13 +853,19 @@ def evaluate_record(
     generated_dir = output_dir / "generated_ids"
     gold_dir = output_dir / "gold_ids"
     raw_dir = output_dir / "raw_outputs"
+    response_metadata_dir = output_dir / "response_metadata"
+    failed_dir = output_dir / "failed_generations"
     generated_dir.mkdir(parents=True, exist_ok=True)
     gold_dir.mkdir(parents=True, exist_ok=True)
     raw_dir.mkdir(parents=True, exist_ok=True)
+    response_metadata_dir.mkdir(parents=True, exist_ok=True)
+    failed_dir.mkdir(parents=True, exist_ok=True)
 
     gold_path = gold_dir / f"{sample_id}.ids"
     pred_path = generated_dir / f"{sample_id}.ids"
     raw_path = raw_dir / f"{sample_id}.txt"
+    response_metadata_path = response_metadata_dir / f"{sample_id}.json"
+    failed_path = failed_dir / f"{sample_id}.json"
     gold_path.write_text(gold_text + "\n", encoding="utf-8")
 
     result: dict[str, Any] = {
@@ -746,21 +878,71 @@ def evaluate_record(
         "gold_path": str(gold_path),
         "pred_path": str(pred_path),
         "raw_path": str(raw_path),
+        "response_metadata_path": str(response_metadata_path),
         "generated": False,
         "error": None,
     }
 
     try:
-        raw, cleaned = generate_one(client, model_name, model_cfg, prompt, inference_messages)
+        raw, cleaned, generation = generate_one(client, model_name, model_cfg, prompt, inference_messages)
         raw_path.write_text(raw, encoding="utf-8")
         pred_path.write_text(cleaned + "\n", encoding="utf-8")
+        write_json(response_metadata_path, generation)
         result["generated"] = True
+        result["model"] = model_name
+        result["model_raw"] = raw
+        result["model_clean"] = cleaned
+        result["generation"] = generation
+        result["request_parameters"] = generation.get("request")
+        result["response_id"] = generation.get("response_id")
+        result["response_model"] = generation.get("response_model")
+        result["finish_reason"] = generation.get("finish_reason")
+        result["usage"] = generation.get("usage")
+        result["truncated"] = generation.get("finish_reason") == "length"
         result["facet"] = score_ids_pair(pred_path, gold_path)
         audit = run_ids_audit(pred_path, eval_cfg)
         result["ids_audit"] = audit
         result["audit_metrics"] = classify_audit(audit)
+        result["audit_statuses"] = audit_statuses(audit)
+        content_ok = int(result["audit_metrics"].get("content_ok") == 1)
+        result["paper_metrics"] = {
+            "Processability": result["audit_metrics"].get("implementation_ok"),
+            "Structure": result["audit_metrics"].get("structure_ok"),
+            "Content": result["audit_metrics"].get("content_ok"),
+            "IDSAuditPass": result["audit_metrics"].get("content_ok"),
+            "FacetF1": result["facet"].get("f1"),
+            "AG-FacetF1": content_ok * float(result["facet"].get("f1", 0.0) or 0.0),
+            "Precision": result["facet"].get("precision"),
+            "Recall": result["facet"].get("recall"),
+        }
     except Exception as e:
         result["error"] = f"{type(e).__name__}: {e}"
+        if isinstance(e, GenerationError):
+            raw_path.write_text(e.raw, encoding="utf-8")
+            if e.cleaned:
+                pred_path.write_text(e.cleaned + "\n", encoding="utf-8")
+            write_json(response_metadata_path, e.generation)
+            result["generation"] = e.generation
+            result["request_parameters"] = e.generation.get("request")
+            result["response_id"] = e.generation.get("response_id")
+            result["response_model"] = e.generation.get("response_model")
+            result["finish_reason"] = e.generation.get("finish_reason")
+            result["usage"] = e.generation.get("usage")
+            result["truncated"] = e.generation.get("finish_reason") == "length"
+            result["model_raw"] = e.raw
+            result["model_clean"] = e.cleaned
+            write_json(
+                failed_path,
+                {
+                    "id": row["id"],
+                    "error": result["error"],
+                    "raw_path": str(raw_path),
+                    "pred_path": str(pred_path),
+                    "response_metadata_path": str(response_metadata_path),
+                    "attempts": e.attempts,
+                },
+            )
+            result["failed_generation_path"] = str(failed_path)
         result["facet"] = {
             "score": 0.0,
             "precision": 0.0,
