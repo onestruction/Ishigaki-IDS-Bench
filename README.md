@@ -1,6 +1,6 @@
 # Ishigaki-IDS-Bench
 
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.20362616.svg)](https://doi.org/10.5281/zenodo.20362616)
+[![DOI](https://zenodo.org/badge/DOI/10.5281%2Fzenodo.20362616.svg)](https://doi.org/10.5281/zenodo.20362616)
 
 Minimal evaluation code for Ishigaki-IDS-Bench. The dataset is distributed on Hugging Face:
 
