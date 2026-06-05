@@ -27,7 +27,7 @@ authors:
   - family-names: Nishioka
     given-names: Daiho
 year: 2026
-license: CC-BY-4.0
+license: Apache-2.0
 repository-code: "https://github.com/onestruction/Ishigaki-IDS-Bench"
 url: "https://arxiv.org/abs/2605.22079"
 preferred-citation:

@@ -1,6 +1,6 @@
 # Ishigaki-IDS-Bench
 
-[![DOI](https://zenodo.org/badge/DOI/10.5281%2Fzenodo.20362616.svg)](https://doi.org/10.5281/zenodo.20362616)
+[![DOI](https://zenodo.org/badge/DOI/10.5281%2Fzenodo.20319464.svg)](https://doi.org/10.5281/zenodo.20319464)
 
 Minimal evaluation code for Ishigaki-IDS-Bench. The dataset is distributed on Hugging Face:
 
@@ -64,6 +64,14 @@ results/failed_generations/
 - If a property set is not specified, or if the input indicates that any custom property set is acceptable, the prompt instructs the model to represent `<ids:propertySet>` with the XML Schema regex pattern `^(?!(Pset_|Qto_)).+`.
 - The facet scorer intentionally uses a compact comparison target and does not score every IDS attribute. For example, applicability occurrence attributes such as `minOccurs` and `maxOccurs` are checked by `ids-tool audit`, but they are not part of the facet matching score.
 - Before scoring, the evaluator removes `<think>...</think>` blocks and, when the output contains a fenced code block, scores the first fenced block content as the generated IDS. Failed generations are saved for auditability; the evaluator does not repair, rerank, or regenerate outputs by default. The template uses `retries: 0` and `api_workers: 1`.
+
+## License
+
+The evaluation code, prompts, configuration files, and reproducibility documentation in this repository are licensed under the Apache License 2.0.
+
+The benchmark dataset and gold IDS files are distributed separately on Hugging Face under CC BY 4.0:
+
+https://huggingface.co/datasets/ONESTRUCTION/Ishigaki-IDS-Bench
 
 ## Citation
 

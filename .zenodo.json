@@ -1,0 +1,25 @@
+{
+  "title": "Ishigaki-IDS-Bench: Evaluation Code and Reproducibility Repository",
+  "creators": [
+    {"name": "Kanazawa, Ryo"},
+    {"name": "Hidaka, Koyo"},
+    {"name": "Miyamoto, Teppei"},
+    {"name": "Kato, Takayuki"},
+    {"name": "Ando, Tomoki"},
+    {"name": "Wang, Chenguang"},
+    {"name": "Jiang, Dayuan"},
+    {"name": "Fujita, Naofumi"},
+    {"name": "Saitoh, Shuhei"},
+    {"name": "Kondo, Atomu"},
+    {"name": "Arakawa, Koki"},
+    {"name": "Nishioka, Daiho"}
+  ],
+  "license": "Apache-2.0",
+  "keywords": [
+    "IDS",
+    "BIM",
+    "IFC",
+    "structured generation",
+    "benchmark"
+  ]
+}
